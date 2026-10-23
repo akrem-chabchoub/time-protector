@@ -16,6 +16,7 @@ import (
 
 	"time-protector/internal/config"
 	"time-protector/internal/hosts"
+	"time-protector/internal/lease"
 	"time-protector/internal/schedule"
 )
 
@@ -136,25 +137,20 @@ func (c *rpcClient) call(req Request) Response {
 	return resp
 }
 
-func solvePrompt(t *testing.T, prompt string) int {
+func (e *env) letter(t *testing.T) string {
 	t.Helper()
-	var left, right int
-	var op string
-	if _, err := fmt.Sscanf(prompt, "%d %s %d", &left, &op, &right); err != nil {
-		t.Fatalf("prompt %q: %v", prompt, err)
+	data, err := os.ReadFile(e.paths.Secret)
+	if err != nil {
+		t.Fatal(err)
 	}
-	switch op {
-	case "+":
-		return left + right
-	case "-":
-		return left - right
-	default:
-		t.Fatalf("op %q", op)
-		return 0
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if len(lines) != 2 || len(lines[1]) != 1 {
+		t.Fatalf("secret %q", data)
 	}
+	return lines[1]
 }
 
-func answerUntilDone(t *testing.T, c *rpcClient, resp Response) Response {
+func answerUntilDone(t *testing.T, e *env, c *rpcClient, resp Response) Response {
 	t.Helper()
 	for resp.Prompt != "" {
 		if !resp.OK {
@@ -167,7 +163,7 @@ func answerUntilDone(t *testing.T, c *rpcClient, resp Response) Response {
 		if strings.Contains(string(raw), `"answer"`) {
 			t.Fatalf("response leaked an answer field: %s", raw)
 		}
-		resp = c.call(Request{Op: "answer", Session: resp.Session, Value: solvePrompt(t, resp.Prompt)})
+		resp = c.call(Request{Op: "answer", Session: resp.Session, Choice: e.letter(t)})
 	}
 	if !resp.OK {
 		t.Fatalf("%+v", resp)
@@ -198,8 +194,10 @@ func TestHoursAndHosts(t *testing.T) {
 	if strings.Count(body, "127.0.0.1 localhost\n") != 1 || strings.Count(body, "# keep me\n") != 1 {
 		t.Fatalf("unrelated lines changed:\n%s", body)
 	}
-	if !strings.Contains(body, "127.0.0.1 mail.google.com\n") || !strings.Contains(body, "::1 mail.google.com\n") {
-		t.Fatalf("missing block:\n%s", body)
+	for _, domain := range []string{"facebook.com", "instagram.com", "web.whatsapp.com", "linkedin.com", "mail.google.com"} {
+		if !strings.Contains(body, "127.0.0.1 "+domain+"\n") || !strings.Contains(body, "::1 "+domain+"\n") {
+			t.Fatalf("missing %s:\n%s", domain, body)
+		}
 	}
 	if strings.Contains(body, "accounts.google.com") || strings.Contains(body, "imap.gmail.com") {
 		t.Fatalf("blocked too much:\n%s", body)
@@ -243,7 +241,7 @@ func TestQuizWrongAnswerCapAndExpiry(t *testing.T) {
 	e := startAt(t, at(10, 0))
 	c := e.dial()
 	resp := c.call(Request{Op: "unlock", Grant: "15m"})
-	if !resp.OK || resp.Capped || resp.Prompt == "" || resp.Correct != 0 || resp.Total != 50 {
+	if !resp.OK || resp.Capped || resp.Prompt == "" || resp.Correct != 0 || resp.Total != lease.SocialLength || resp.Explain != "" {
 		t.Fatalf("%+v", resp)
 	}
 	info, err := os.Stat(e.paths.Secret)
@@ -268,25 +266,25 @@ func TestQuizWrongAnswerCapAndExpiry(t *testing.T) {
 		t.Fatalf("question mode %s", qinfo.Mode().Perm())
 	}
 
-	wrong := c.call(Request{Op: "answer", Session: resp.Session, Value: 1000})
-	if !wrong.OK || wrong.Correct != 0 || wrong.Done || wrong.Prompt == "" {
+	wrong := c.call(Request{Op: "answer", Session: resp.Session, Choice: "z"})
+	if !wrong.OK || wrong.Correct != 0 || wrong.Done || wrong.Prompt == "" || wrong.Explain == "" {
 		t.Fatalf("wrong answer counted: %+v", wrong)
 	}
 	resp = wrong
-	for i := 0; i < 49; i++ {
-		resp = c.call(Request{Op: "answer", Session: resp.Session, Value: solvePrompt(t, resp.Prompt)})
+	for i := 0; i < lease.SocialLength-1; i++ {
+		resp = c.call(Request{Op: "answer", Session: resp.Session, Choice: e.letter(t)})
 		if !resp.OK || resp.Done {
 			t.Fatalf("step %d: %+v", i, resp)
 		}
 	}
-	if resp.Correct != 49 {
+	if resp.Correct != lease.SocialLength-1 {
 		t.Fatalf("correct %d", resp.Correct)
 	}
 	if !strings.Contains(e.readHosts(), hosts.Begin) {
-		t.Fatal("block dropped before 50 correct answers")
+		t.Fatal("block dropped before the last correct answer")
 	}
-	resp = c.call(Request{Op: "answer", Session: resp.Session, Value: solvePrompt(t, resp.Prompt)})
-	if !resp.Done || resp.Correct != 50 || resp.Reason != "Open until 10:15." {
+	resp = c.call(Request{Op: "answer", Session: resp.Session, Choice: e.letter(t)})
+	if !resp.Done || resp.Correct != lease.SocialLength || resp.Reason != "Open until 10:15." {
 		t.Fatalf("%+v", resp)
 	}
 	if strings.Contains(e.readHosts(), hosts.Begin) {
@@ -321,7 +319,7 @@ func TestGrantCap(t *testing.T) {
 	if !resp.Capped {
 		t.Fatal("expected the 30 minute cap")
 	}
-	done := answerUntilDone(t, c, resp)
+	done := answerUntilDone(t, e, c, resp)
 	if done.Reason != "Open until 10:30." {
 		t.Fatalf("%+v", done)
 	}
@@ -333,15 +331,15 @@ func TestGrantCap(t *testing.T) {
 	if err := json.Unmarshal(data, &disk); err != nil {
 		t.Fatal(err)
 	}
-	if !disk.LeaseUntil.Equal(at(10, 30)) {
-		t.Fatalf("lease until %s", disk.LeaseUntil)
+	if !disk.SocialUntil.Equal(at(10, 30)) || !disk.GmailUntil.Equal(at(10, 30)) {
+		t.Fatalf("lease social %s gmail %s", disk.SocialUntil, disk.GmailUntil)
 	}
 }
 
 func TestLockEndsLease(t *testing.T) {
 	e := startAt(t, at(10, 0))
 	c := e.dial()
-	done := answerUntilDone(t, c, c.call(Request{Op: "unlock", Grant: "15m"}))
+	done := answerUntilDone(t, e, c, c.call(Request{Op: "unlock", Grant: "15m"}))
 	if done.Reason != "Open until 10:15." {
 		t.Fatalf("%+v", done)
 	}
@@ -358,7 +356,7 @@ func TestCancelResets(t *testing.T) {
 	e := startAt(t, at(10, 0))
 	c := e.dial()
 	resp := c.call(Request{Op: "unlock", Grant: "15m"})
-	resp = c.call(Request{Op: "answer", Session: resp.Session, Value: solvePrompt(t, resp.Prompt)})
+	resp = c.call(Request{Op: "answer", Session: resp.Session, Choice: e.letter(t)})
 	if resp.Correct != 1 {
 		t.Fatalf("%+v", resp)
 	}
@@ -383,7 +381,7 @@ func TestDisconnectResets(t *testing.T) {
 	e := startAt(t, at(10, 0))
 	c := e.dial()
 	resp := c.call(Request{Op: "unlock", Grant: "15m"})
-	resp = c.call(Request{Op: "answer", Session: resp.Session, Value: solvePrompt(t, resp.Prompt)})
+	resp = c.call(Request{Op: "answer", Session: resp.Session, Choice: e.letter(t)})
 	if resp.Correct != 1 {
 		t.Fatalf("%+v", resp)
 	}
@@ -425,7 +423,7 @@ func TestScheduleWaitsForQuiz(t *testing.T) {
 	if string(during) != string(before) {
 		t.Fatal("schedule changed before the quiz finished")
 	}
-	done := answerUntilDone(t, c, resp)
+	done := answerUntilDone(t, e, c, resp)
 	if done.Reason != "Open until 14:00." {
 		t.Fatalf("%+v", done)
 	}
@@ -457,10 +455,10 @@ func TestTamperAndUnknownCommand(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("secret %q", data)
 	}
-	if err := os.WriteFile(e.paths.Secret, []byte(lines[0]+"\n1000\n"), 0o600); err != nil {
+	if err := os.WriteFile(e.paths.Secret, []byte(lines[0]+"\nz\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	graded := c.call(Request{Op: "answer", Session: resp.Session, Value: solvePrompt(t, resp.Prompt)})
+	graded := c.call(Request{Op: "answer", Session: resp.Session, Choice: lines[1]})
 	if graded.Correct != 0 || graded.Done {
 		t.Fatalf("tampered answer counted: %+v", graded)
 	}
@@ -509,7 +507,7 @@ func TestOutsideHoursSkipsQuiz(t *testing.T) {
 func TestLeaseSurvivesRestart(t *testing.T) {
 	e := startAt(t, at(10, 0))
 	c := e.dial()
-	done := answerUntilDone(t, c, c.call(Request{Op: "unlock", Grant: "15m"}))
+	done := answerUntilDone(t, e, c, c.call(Request{Op: "unlock", Grant: "15m"}))
 	if done.Reason != "Open until 10:15." {
 		t.Fatalf("%+v", done)
 	}
@@ -544,6 +542,42 @@ func TestLeaseSurvivesRestart(t *testing.T) {
 	status := dialPaths(t, e.paths.Socket).call(Request{Op: "status"})
 	if status.Blocked || status.Reason != "Open until 10:15." {
 		t.Fatalf("%+v", status)
+	}
+}
+
+func TestGmailUnlockLeavesTheOthersBlocked(t *testing.T) {
+	e := startAt(t, at(10, 0))
+	c := e.dial()
+	started := c.call(Request{Op: "unlock", Target: "gmail", Grant: "15m"})
+	if started.Total != lease.ShortLength || started.Session == "" {
+		t.Fatalf("%+v", started)
+	}
+	if ack := c.call(Request{Op: "cancel", Session: started.Session}); !ack.OK {
+		t.Fatalf("cancel %+v", ack)
+	}
+	resp := c.call(Request{Op: "unlock", Target: "whatsapp", Grant: "15m"})
+	if resp.Total != lease.ShortLength || resp.Prompt == "" || resp.Explain != "" {
+		t.Fatalf("%+v", resp)
+	}
+	done := answerUntilDone(t, e, c, resp)
+	want := "WhatsApp and Gmail are open until 10:15. Facebook, Instagram, and LinkedIn stay blocked until 12:00."
+	if !done.Done || done.Reason != want {
+		t.Fatalf("%+v", done)
+	}
+	body := e.readHosts()
+	for _, domain := range []string{"gmail.com", "mail.google.com", "web.whatsapp.com", "wa.me"} {
+		if strings.Contains(body, "127.0.0.1 "+domain+"\n") {
+			t.Fatalf("%s still blocked:\n%s", domain, body)
+		}
+	}
+	for _, domain := range []string{"facebook.com", "instagram.com", "linkedin.com"} {
+		if !strings.Contains(body, "127.0.0.1 "+domain+"\n") {
+			t.Fatalf("%s opened:\n%s", domain, body)
+		}
+	}
+	again := c.call(Request{Op: "unlock", Grant: "15m"})
+	if again.Prompt == "" || again.Total != lease.SocialLength {
+		t.Fatalf("social quiz did not start: %+v", again)
 	}
 }
 

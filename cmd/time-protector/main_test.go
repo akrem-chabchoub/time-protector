@@ -63,7 +63,7 @@ func TestUnlockLoop(t *testing.T) {
 		errCh <- runSession(sock, inR, outW, service.Request{Op: "unlock", Grant: "15m"})
 		_ = outW.Close()
 	}()
-	timer := time.AfterFunc(5*time.Second, func() {
+	timer := time.AfterFunc(10*time.Second, func() {
 		_ = inR.Close()
 		_ = outR.Close()
 	})
@@ -79,23 +79,20 @@ func TestUnlockLoop(t *testing.T) {
 		}
 		line = strings.TrimRight(line, "\n")
 		switch {
-		case line == "Nope.":
+		case line == "Not yet.":
 			sawNope++
-		case line == "Type the number.":
+		case line == "Type a, b, c, or d.":
 			sawType++
-		case strings.HasPrefix(line, "Solve"):
-		case strings.Contains(line, "/"):
-			parts := strings.SplitN(line, "  ", 2)
-			if len(parts) != 2 {
-				t.Fatalf("line %q", line)
-			}
-			switch {
-			case sawType == 0:
-				fmt.Fprintln(inW, "abc")
-			case sawNope == 0:
-				fmt.Fprintln(inW, "1000")
-			default:
-				fmt.Fprintln(inW, solveLine(t, parts[1]))
+		case line == "Yes." || strings.HasPrefix(line, "Answer ") || strings.HasPrefix(line, "[") || strings.HasPrefix(line, "  "):
+			if strings.HasPrefix(line, "  d) ") {
+				switch {
+				case sawType == 0:
+					fmt.Fprintln(inW, "nope")
+				case sawNope == 0:
+					fmt.Fprintln(inW, otherLetter(t, paths.Secret))
+				default:
+					fmt.Fprintln(inW, secretLetter(t, paths.Secret))
+				}
 			}
 		default:
 			reason = line
@@ -128,15 +125,23 @@ func waitForSocket(t *testing.T, socket string) {
 	}
 }
 
-func solveLine(t *testing.T, prompt string) int {
+func secretLetter(t *testing.T, path string) string {
 	t.Helper()
-	var left, right int
-	var op string
-	if _, err := fmt.Sscanf(prompt, "%d %s %d", &left, &op, &right); err != nil {
-		t.Fatalf("prompt %q: %v", prompt, err)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if op == "-" {
-		return left - right
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if len(lines) != 2 || len(lines[1]) != 1 {
+		t.Fatalf("secret %q", data)
 	}
-	return left + right
+	return lines[1]
+}
+
+func otherLetter(t *testing.T, path string) string {
+	t.Helper()
+	if secretLetter(t, path) == "a" {
+		return "b"
+	}
+	return "a"
 }

@@ -1,4 +1,4 @@
-// Package lease counts correct sums and caps how long the sites stay open.
+// Package lease counts correct answers and caps how long the sites stay open.
 package lease
 
 import (
@@ -7,8 +7,10 @@ import (
 )
 
 const (
-	// QuizLength is how many correct sums open the sites.
-	QuizLength = 50
+	// SocialLength is how many correct answers open every blocked site.
+	SocialLength = 10
+	// ShortLength is how many correct answers open only WhatsApp and Gmail.
+	ShortLength = 5
 	// MaxGrant is the longest break.
 	MaxGrant = 30 * time.Minute
 )
@@ -19,13 +21,13 @@ type Session struct {
 }
 
 // Accept counts a correct answer. A wrong answer leaves the count alone.
-// It reports whether the quiz is finished.
-func (s *Session) Accept(right bool) bool {
-	if s == nil || !right {
+// It reports whether the quiz has reached need.
+func (s *Session) Accept(right bool, need int) bool {
+	if s == nil || !right || need <= 0 {
 		return false
 	}
 	s.Correct++
-	return s.Correct >= QuizLength
+	return s.Correct >= need
 }
 
 // Reset drops progress after a quit.

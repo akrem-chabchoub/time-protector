@@ -7,13 +7,13 @@ import (
 
 func TestWrongAnswerDoesNotCount(t *testing.T) {
 	var s Session
-	if s.Accept(false) {
+	if s.Accept(false, ShortLength) {
 		t.Fatal("wrong answer finished the quiz")
 	}
 	if s.Correct != 0 {
 		t.Fatalf("count = %d", s.Correct)
 	}
-	if s.Accept(true) {
+	if s.Accept(true, ShortLength) {
 		t.Fatal("one correct answer finished the quiz")
 	}
 	if s.Correct != 1 {
@@ -28,23 +28,23 @@ func TestQuitResets(t *testing.T) {
 		t.Fatalf("count = %d", s.Correct)
 	}
 	var done bool
-	for i := 0; i < QuizLength; i++ {
-		done = s.Accept(true)
+	for i := 0; i < ShortLength; i++ {
+		done = s.Accept(true, ShortLength)
 	}
-	if !done || s.Correct != QuizLength {
+	if !done || s.Correct != ShortLength {
 		t.Fatalf("done=%v count=%d", done, s.Correct)
 	}
 }
 
 func TestFinishesOnlyAtQuizLength(t *testing.T) {
 	var s Session
-	for i := 0; i < QuizLength-1; i++ {
-		if s.Accept(true) {
+	for i := 0; i < SocialLength-1; i++ {
+		if s.Accept(true, SocialLength) {
 			t.Fatalf("finished at %d", s.Correct)
 		}
 	}
-	if !s.Accept(true) {
-		t.Fatal("expected the 50th correct answer to finish")
+	if !s.Accept(true, SocialLength) {
+		t.Fatal("expected the last correct answer to finish")
 	}
 }
 

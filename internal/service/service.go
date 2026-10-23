@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -64,8 +63,9 @@ func DefaultPaths() Paths {
 type Request struct {
 	Op      string   `json:"op"`
 	Grant   string   `json:"grant,omitempty"`
+	Target  string   `json:"target,omitempty"`
 	Session string   `json:"session,omitempty"`
-	Value   int      `json:"value"`
+	Choice  string   `json:"choice,omitempty"`
 	Windows []string `json:"windows,omitempty"`
 }
 
@@ -77,6 +77,7 @@ type Response struct {
 	Reason  string `json:"reason,omitempty"`
 	Session string `json:"session,omitempty"`
 	Prompt  string `json:"prompt,omitempty"`
+	Explain string `json:"explain,omitempty"`
 	Correct int    `json:"correct,omitempty"`
 	Total   int    `json:"total,omitempty"`
 	Done    bool   `json:"done"`
@@ -86,16 +87,22 @@ type Response struct {
 type quizSession struct {
 	id       string
 	kind     string
+	scope    string
+	need     int
 	grant    time.Duration
 	capped   bool
 	windows  []schedule.Window
 	progress lease.Session
+	asked    map[string]bool
 	prompt   string
-	answer   int
+	letter   string
+	why      string
 }
 
 type diskState struct {
-	LeaseUntil time.Time `json:"leaseUntil,omitempty"`
+	LeaseUntil  time.Time `json:"leaseUntil,omitempty"`
+	SocialUntil time.Time `json:"socialUntil,omitempty"`
+	GmailUntil  time.Time `json:"gmailUntil,omitempty"`
 }
 
 // Service is the long-running blocker.
@@ -107,13 +114,14 @@ type Service struct {
 	ready chan struct{}
 	ln    net.Listener
 
-	mu         sync.Mutex
-	rng        *mrand.Rand
-	session    *quizSession
-	leaseUntil time.Time
-	cached     *schedule.Schedule
-	configErr  string
-	hostsErr   string
+	mu          sync.Mutex
+	rng         *mrand.Rand
+	session     *quizSession
+	socialUntil time.Time
+	gmailUntil  time.Time
+	cached      *schedule.Schedule
+	configErr   string
+	hostsErr    string
 }
 
 // New builds a service. Call Run to listen.
@@ -257,17 +265,25 @@ func (s *Service) handle(sessionID *string, req Request) Response {
 }
 
 func (s *Service) begin(kind string, req Request) Response {
-	sess := &quizSession{kind: kind}
+	sess := &quizSession{kind: kind, need: lease.SocialLength, asked: map[string]bool{}}
 	switch kind {
 	case "unlock":
 		grant, capped, err := lease.ParseGrant(req.Grant)
 		if err != nil {
 			return Response{OK: false, Error: err.Error()}
 		}
+		scope, need, err := unlockScope(req.Target)
+		if err != nil {
+			return Response{OK: false, Error: err.Error()}
+		}
 		now := s.now()
-		if !s.schedule().Blocks(now) || lease.Active(s.leaseUntil, now) {
+		inWindow := s.schedule().Blocks(now)
+		socialOpen := lease.Active(s.socialUntil, now)
+		if !inWindow || socialOpen || (scope == "short" && lease.Active(s.gmailUntil, now)) {
 			return s.statusResp()
 		}
+		sess.scope = scope
+		sess.need = need
 		sess.grant = grant
 		sess.capped = capped
 	case "schedule":
@@ -301,8 +317,19 @@ func (s *Service) begin(kind string, req Request) Response {
 		Blocked: s.blockedNow(),
 		Session: sess.id,
 		Prompt:  sess.prompt,
-		Total:   lease.QuizLength,
+		Total:   sess.need,
 		Capped:  sess.capped,
+	}
+}
+
+func unlockScope(target string) (string, int, error) {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "", "all", "social":
+		return "social", lease.SocialLength, nil
+	case "gmail", "whatsapp":
+		return "short", lease.ShortLength, nil
+	default:
+		return "", 0, fmt.Errorf("use unlock 15m, unlock gmail 15m, or unlock whatsapp 15m")
 	}
 }
 
@@ -311,16 +338,19 @@ func (s *Service) answer(req Request) Response {
 	if sess == nil || sess.id != req.Session {
 		return Response{OK: false, Error: "that quiz is no longer active"}
 	}
-	if sess.progress.Correct >= lease.QuizLength {
+	if sess.progress.Correct >= sess.need {
 		return s.finish(sess)
 	}
 	// Grade from the root-only file so the client cannot mark the quiz done.
-	right, err := s.grade(req.Session, req.Value)
+	why := sess.why
+	right, err := s.grade(req.Session, req.Choice)
 	if err != nil {
 		return Response{OK: false, Error: err.Error()}
 	}
-	if right && sess.progress.Accept(true) {
-		return s.finish(sess)
+	if right && sess.progress.Accept(true, sess.need) {
+		resp := s.finish(sess)
+		resp.Explain = why
+		return resp
 	}
 	if err := s.deal(sess); err != nil {
 		return Response{OK: false, Error: err.Error()}
@@ -330,18 +360,27 @@ func (s *Service) answer(req Request) Response {
 		Blocked: s.blockedNow(),
 		Session: sess.id,
 		Prompt:  sess.prompt,
+		Explain: why,
 		Correct: sess.progress.Correct,
-		Total:   lease.QuizLength,
+		Total:   sess.need,
 	}
 }
 
 func (s *Service) finish(sess *quizSession) Response {
 	switch sess.kind {
 	case "unlock":
-		previous := s.leaseUntil
-		s.leaseUntil = s.now().Add(sess.grant)
+		previousSocial := s.socialUntil
+		previousGmail := s.gmailUntil
+		until := s.now().Add(sess.grant)
+		if sess.scope == "short" {
+			s.gmailUntil = until
+		} else {
+			s.socialUntil = until
+			s.gmailUntil = until
+		}
 		if err := s.saveState(); err != nil {
-			s.leaseUntil = previous
+			s.socialUntil = previousSocial
+			s.gmailUntil = previousGmail
 			return Response{OK: false, Error: err.Error()}
 		}
 	case "schedule":
@@ -361,18 +400,19 @@ func (s *Service) finish(sess *quizSession) Response {
 		resp.Error = err.Error()
 		resp.Done = true
 		resp.Correct = sess.progress.Correct
-		resp.Total = lease.QuizLength
+		resp.Total = sess.need
 		return resp
 	}
 	resp := s.statusResp()
 	resp.Done = true
 	resp.Correct = sess.progress.Correct
-	resp.Total = lease.QuizLength
+	resp.Total = sess.need
 	return resp
 }
 
 func (s *Service) lock() Response {
-	s.leaseUntil = time.Time{}
+	s.socialUntil = time.Time{}
+	s.gmailUntil = time.Time{}
 	if err := s.saveState(); err != nil {
 		return Response{OK: false, Error: err.Error()}
 	}
@@ -395,24 +435,29 @@ func (s *Service) abandon(id string) {
 }
 
 func (s *Service) deal(sess *quizSession) error {
-	problem := quiz.New(s.random())
-	secret := sess.id + "\n" + strconv.Itoa(problem.Answer()) + "\n"
+	if sess.asked == nil {
+		sess.asked = map[string]bool{}
+	}
+	item := quiz.Draw(s.random(), sess.asked)
+	sess.asked[item.ID] = true
+	secret := sess.id + "\n" + item.Letter() + "\n"
 	if err := writeAtomic(s.paths.Secret, []byte(secret), 0o600); err != nil {
 		return err
 	}
-	if err := writeAtomic(s.paths.Question, []byte(problem.Prompt()+"\n"), 0o644); err != nil {
+	if err := writeAtomic(s.paths.Question, []byte(item.Prompt()+"\n"), 0o644); err != nil {
 		if sess.prompt != "" {
-			prev := sess.id + "\n" + strconv.Itoa(sess.answer) + "\n"
+			prev := sess.id + "\n" + sess.letter + "\n"
 			_ = writeAtomic(s.paths.Secret, []byte(prev), 0o600)
 		}
 		return err
 	}
-	sess.prompt = problem.Prompt()
-	sess.answer = problem.Answer()
+	sess.prompt = item.Prompt()
+	sess.letter = item.Letter()
+	sess.why = item.Explain()
 	return nil
 }
 
-func (s *Service) grade(sessionID string, value int) (bool, error) {
+func (s *Service) grade(sessionID, choice string) (bool, error) {
 	data, err := os.ReadFile(s.paths.Secret)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -424,11 +469,7 @@ func (s *Service) grade(sessionID string, value int) (bool, error) {
 	if len(lines) != 2 || lines[0] != sessionID {
 		return false, fmt.Errorf("that quiz is no longer active")
 	}
-	answer, err := strconv.Atoi(lines[1])
-	if err != nil {
-		return false, fmt.Errorf("that quiz is no longer active")
-	}
-	return answer == value, nil
+	return strings.ToLower(strings.TrimSpace(choice)) == lines[1], nil
 }
 
 func (s *Service) clearQuizFiles() {
@@ -451,8 +492,21 @@ func (s *Service) now() time.Time {
 }
 
 func (s *Service) blockedNow() bool {
-	now := s.now()
-	return s.schedule().Blocks(now) && !lease.Active(s.leaseUntil, now)
+	return len(s.blockedDomains(s.now())) > 0
+}
+
+func (s *Service) blockedDomains(now time.Time) []string {
+	if !s.schedule().Blocks(now) {
+		return nil
+	}
+	var out []string
+	if !lease.Active(s.socialUntil, now) {
+		out = append(out, blocklist.Social()...)
+	}
+	if !lease.Active(s.socialUntil, now) && !lease.Active(s.gmailUntil, now) {
+		out = append(out, blocklist.Short()...)
+	}
+	return out
 }
 
 func (s *Service) schedule() schedule.Schedule {
@@ -478,16 +532,22 @@ func (s *Service) schedule() schedule.Schedule {
 func (s *Service) statusResp() Response {
 	now := s.now()
 	sched := s.schedule()
-	openLease := lease.Active(s.leaseUntil, now)
-	blocked := sched.Blocks(now) && !openLease
+	inWindow := sched.Blocks(now)
+	socialOpen := lease.Active(s.socialUntil, now)
+	shortOpen := socialOpen || lease.Active(s.gmailUntil, now)
+	blocked := inWindow && !socialOpen
 	var reason string
 	switch {
-	case blocked:
+	case inWindow && !socialOpen && !shortOpen:
 		reason = fmt.Sprintf("Blocked until %s.", human(now, sched.NextChange(now)))
-	case openLease && sched.Blocks(now):
-		reason = fmt.Sprintf("Open until %s.", human(now, s.leaseUntil))
+	case inWindow && socialOpen:
+		reason = fmt.Sprintf("Open until %s.", human(now, s.socialUntil))
+	case inWindow && shortOpen:
+		reason = fmt.Sprintf("WhatsApp and Gmail are open until %s. Facebook, Instagram, and LinkedIn stay blocked until %s.", human(now, s.gmailUntil), human(now, sched.NextChange(now)))
+		blocked = true
 	default:
 		reason = fmt.Sprintf("Open until %s.", human(now, sched.NextChange(now)))
+		blocked = false
 	}
 	if s.hostsErr != "" {
 		reason += " Hosts file was not updated: " + s.hostsErr
@@ -521,8 +581,16 @@ func (s *Service) reconcile() error {
 
 func (s *Service) reconcileLocked() error {
 	now := s.now()
-	if !s.leaseUntil.IsZero() && !lease.Active(s.leaseUntil, now) {
-		s.leaseUntil = time.Time{}
+	expired := false
+	if !s.socialUntil.IsZero() && !lease.Active(s.socialUntil, now) {
+		s.socialUntil = time.Time{}
+		expired = true
+	}
+	if !s.gmailUntil.IsZero() && !lease.Active(s.gmailUntil, now) {
+		s.gmailUntil = time.Time{}
+		expired = true
+	}
+	if expired {
 		if err := s.saveState(); err != nil {
 			s.noteHostsErr(err)
 			return err
@@ -533,7 +601,8 @@ func (s *Service) reconcileLocked() error {
 		s.noteHostsErr(err)
 		return err
 	}
-	next, err := hosts.Apply(string(current), blocklist.Domains(), s.blockedNow())
+	domains := s.blockedDomains(now)
+	next, err := hosts.Apply(string(current), domains, len(domains) > 0)
 	if err != nil {
 		s.noteHostsErr(err)
 		return err
@@ -601,13 +670,18 @@ func (s *Service) loadState() error {
 		return err
 	}
 	s.mu.Lock()
-	s.leaseUntil = disk.LeaseUntil
+	s.socialUntil = disk.SocialUntil
+	s.gmailUntil = disk.GmailUntil
+	if s.socialUntil.IsZero() && s.gmailUntil.IsZero() && !disk.LeaseUntil.IsZero() {
+		s.socialUntil = disk.LeaseUntil
+		s.gmailUntil = disk.LeaseUntil
+	}
 	s.mu.Unlock()
 	return nil
 }
 
 func (s *Service) saveState() error {
-	data, err := json.Marshal(diskState{LeaseUntil: s.leaseUntil})
+	data, err := json.Marshal(diskState{SocialUntil: s.socialUntil, GmailUntil: s.gmailUntil})
 	if err != nil {
 		return err
 	}

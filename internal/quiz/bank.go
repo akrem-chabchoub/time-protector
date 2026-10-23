@@ -1,0 +1,403 @@
+package quiz
+
+// bank is practice, not a trick test. Each why is the idea to remember.
+var bank = []Question{
+	{
+		ID: "k8s-pod", Topic: "k8s", Correct: 1,
+		Ask: "What is the smallest thing Kubernetes runs?",
+		Choices: [4]string{
+			"a container image",
+			"a pod",
+			"a node",
+			"a cluster",
+		},
+		Why: "A pod is one or more containers that share a network and can share disk.",
+	},
+	{
+		ID: "k8s-deploy", Topic: "k8s", Correct: 2,
+		Ask: "A pod dies. What starts a new one to keep the count?",
+		Choices: [4]string{
+			"a ConfigMap",
+			"a Secret",
+			"a Deployment",
+			"an Ingress",
+		},
+		Why: "A Deployment asks for a number of pods and replaces one that dies.",
+	},
+	{
+		ID: "k8s-service", Topic: "k8s", Correct: 0,
+		Ask: "Why put a Service in front of pods?",
+		Choices: [4]string{
+			"pods get new addresses, the Service stays put",
+			"it builds the container image",
+			"it stores passwords",
+			"it is the machine the pod runs on",
+		},
+		Why: "Pod addresses change. A Service is the stable door in front of them.",
+	},
+	{
+		ID: "k8s-config", Topic: "k8s", Correct: 3,
+		Ask: "Where do ordinary settings belong, not passwords?",
+		Choices: [4]string{
+			"in a Secret",
+			"in the image name",
+			"in a PersistentVolume",
+			"in a ConfigMap",
+		},
+		Why: "A ConfigMap holds plain settings. Passwords belong in a Secret.",
+	},
+	{
+		ID: "k8s-namespace", Topic: "k8s", Correct: 1,
+		Ask: "What is a Namespace?",
+		Choices: [4]string{
+			"a separate cluster",
+			"a folder of names inside one cluster",
+			"a kind of disk",
+			"a probe",
+		},
+		Why: "A Namespace groups names. It does not by itself stop apps from talking.",
+	},
+	{
+		ID: "k8s-live", Topic: "k8s", Correct: 0,
+		Ask: "A liveness probe fails. What happens?",
+		Choices: [4]string{
+			"the container is restarted",
+			"the cluster is deleted",
+			"the pod is only removed from the Service",
+			"nothing, probes are comments",
+		},
+		Why: "Liveness means the process is stuck, so Kubernetes starts that container again.",
+	},
+	{
+		ID: "k8s-ready", Topic: "k8s", Correct: 2,
+		Ask: "A readiness probe fails. What happens?",
+		Choices: [4]string{
+			"the node is drained",
+			"the image is rebuilt",
+			"the pod stops receiving Service traffic",
+			"the Deployment is deleted",
+		},
+		Why: "Readiness means it is alive but not ready for visitors yet.",
+	},
+	{
+		ID: "k8s-image", Topic: "k8s", Correct: 3,
+		Ask: "What is a container image?",
+		Choices: [4]string{
+			"a running process",
+			"a Kubernetes node",
+			"a YAML file",
+			"the packed app and its files",
+		},
+		Why: "The image is the package. A container is a running copy of that package.",
+	},
+	{
+		ID: "k8s-apply", Topic: "k8s", Correct: 1,
+		Ask: "What does kubectl apply do with a file?",
+		Choices: [4]string{
+			"it only prints the file",
+			"it makes the cluster match the file",
+			"it deletes the namespace",
+			"it builds a container image",
+		},
+		Why: "Apply creates what is missing and updates what is different.",
+	},
+	{
+		ID: "k8s-requests", Topic: "k8s", Correct: 0,
+		Ask: "What is resources.requests for?",
+		Choices: [4]string{
+			"how much CPU and memory the pod is reserved",
+			"the maximum log lines",
+			"the number of namespaces",
+			"the image tag",
+		},
+		Why: "Requests are the reservation. Limits are the ceiling.",
+	},
+	{
+		ID: "k8s-ingress", Topic: "k8s", Correct: 2,
+		Ask: "What is an Ingress for?",
+		Choices: [4]string{
+			"storing files after a pod dies",
+			"restarting a stuck container",
+			"HTTP routes from a host name into Services",
+			"building the image",
+		},
+		Why: "An Ingress is the HTTP front door. It sends each host or path to a Service.",
+	},
+	{
+		ID: "k8s-pvc", Topic: "k8s", Correct: 1,
+		Ask: "A pod writes a file and then the pod is replaced. How do you keep the file?",
+		Choices: [4]string{
+			"write it in /tmp",
+			"mount a volume from a PersistentVolumeClaim",
+			"put it in an environment variable",
+			"name the container the same",
+		},
+		Why: "Files inside the container disappear with it. A volume can outlive the pod.",
+	},
+
+	{
+		ID: "go-nil-map", Topic: "go", Correct: 2,
+		Ask: "What happens if you write into a nil map?",
+		Choices: [4]string{
+			"the key is stored",
+			"it returns false",
+			"the program panics",
+			"it blocks forever",
+		},
+		Why: "Reading a nil map is fine. Writing needs make first, or the program panics.",
+	},
+	{
+		ID: "go-goroutine", Topic: "go", Correct: 0,
+		Ask: "How does a goroutine stop?",
+		Choices: [4]string{
+			"its function returns",
+			"the garbage collector collects it",
+			"go test stops it",
+			"a nil map stops it",
+		},
+		Why: "A goroutine runs until the function returns. Cancel a context or close a channel it is waiting on.",
+	},
+	{
+		ID: "go-pointer", Topic: "go", Correct: 3,
+		Ask: "What is a pointer?",
+		Choices: [4]string{
+			"a copy of the value",
+			"a goroutine",
+			"an error",
+			"the address of a value",
+		},
+		Why: "Changing the value through the pointer changes the original, not a copy.",
+	},
+	{
+		ID: "go-defer", Topic: "go", Correct: 1,
+		Ask: "When does a defer run?",
+		Choices: [4]string{
+			"at the start of the function",
+			"when the function returns",
+			"only if there is no error",
+			"when the program starts",
+		},
+		Why: "Defer waits until the function is leaving, including when it panics.",
+	},
+	{
+		ID: "go-test", Topic: "go", Correct: 0,
+		Ask: "What does go test ./... run?",
+		Choices: [4]string{
+			"tests in this folder and every folder under it",
+			"only the file you have open",
+			"the program's main function",
+			"gofmt",
+		},
+		Why: "The three dots mean this package and the packages below it.",
+	},
+	{
+		ID: "go-empty-struct", Topic: "go", Correct: 2,
+		Ask: "How much memory does struct{} take?",
+		Choices: [4]string{
+			"8 bytes",
+			"1 byte",
+			"zero bytes",
+			"the size of a pointer",
+		},
+		Why: "An empty struct carries no data. People use it as a signal.",
+	},
+	{
+		ID: "go-nil-slice", Topic: "go", Correct: 1,
+		Ask: "What is the zero value of a slice, and what is its length?",
+		Choices: [4]string{
+			"an empty array, length 1",
+			"nil, length 0",
+			"a map, length 0",
+			"a panic",
+		},
+		Why: "A nil slice has length 0. Ranging over it does nothing, and append works.",
+	},
+	{
+		ID: "go-chan", Topic: "go", Correct: 3,
+		Ask: "Which channel can hold one value without a receiver waiting?",
+		Choices: [4]string{
+			"make(chan int)",
+			"var ch chan int",
+			"make(chan int, 0)",
+			"make(chan int, 1)",
+		},
+		Why: "The number in make is the buffer. A nil channel or a size of 0 cannot store a spare value.",
+	},
+	{
+		ID: "go-err", Topic: "go", Correct: 0,
+		Ask: "A function returns err and err is not nil. What does that mean?",
+		Choices: [4]string{
+			"the call failed, and err says why",
+			"the call worked",
+			"the program must panic",
+			"the error is only a log",
+		},
+		Why: "Go returns failures as values. Check err before you trust the other results.",
+	},
+	{
+		ID: "go-map-order", Topic: "go", Correct: 2,
+		Ask: "What order do you get when you range over a map?",
+		Choices: [4]string{
+			"alphabetical",
+			"the order you inserted",
+			"no order you can rely on",
+			"largest value first",
+		},
+		Why: "Map order is shuffled on purpose. Sort the keys if you need an order.",
+	},
+	{
+		ID: "go-receiver", Topic: "go", Correct: 1,
+		Ask: "A method has a value receiver. What does it change?",
+		Choices: [4]string{
+			"the caller's struct",
+			"a copy, so the caller stays the same",
+			"every value of that type in the program",
+			"only nil pointers",
+		},
+		Why: "A value receiver gets a copy. Use a pointer receiver to change the caller's struct.",
+	},
+	{
+		ID: "go-fmt", Topic: "go", Correct: 0,
+		Ask: "What is gofmt for?",
+		Choices: [4]string{
+			"putting the file in the standard layout",
+			"running the tests",
+			"compiling a smaller binary",
+			"adding comments",
+		},
+		Why: "gofmt makes everyone's Go look the same, so reviews are about the change.",
+	},
+
+	{
+		ID: "ps-small", Topic: "problem", Correct: 2,
+		Ask: "A bug appears only on the real system. What do you hunt first?",
+		Choices: [4]string{
+			"a full rewrite",
+			"more features",
+			"the smallest case that still fails",
+			"a new database",
+		},
+		Why: "A small failing case is easier to reason about than the whole system.",
+	},
+	{
+		ID: "ps-merge", Topic: "problem", Correct: 0,
+		Ask: "Two people edit the same lines and git stops. What is that?",
+		Choices: [4]string{
+			"a merge conflict",
+			"a passing test",
+			"a liveness probe",
+			"a nil map",
+		},
+		Why: "Git will not guess which lines you wanted. You pick, then continue.",
+	},
+	{
+		ID: "ps-slow", Topic: "problem", Correct: 3,
+		Ask: "A page is slow. What do you do before you change code?",
+		Choices: [4]string{
+			"add more servers because that always works",
+			"rewrite it in another language",
+			"delete the tests",
+			"measure where the time goes",
+		},
+		Why: "Guessing spends the fix on the wrong part. Measure first.",
+	},
+	{
+		ID: "ps-alert", Topic: "problem", Correct: 1,
+		Ask: "An alert fires often, and each time the site is actually fine. What goes wrong?",
+		Choices: [4]string{
+			"nothing, more alerts are always better",
+			"people learn to ignore alerts, including real ones",
+			"the cluster deletes itself",
+			"gofmt fails",
+		},
+		Why: "A noisy alert trains you to look away. Then a real one is missed.",
+	},
+	{
+		ID: "ps-automate", Topic: "problem", Correct: 0,
+		Ask: "A chore takes 5 minutes by hand, or 2 hours to automate. When is by hand the better choice?",
+		Choices: [4]string{
+			"you will almost never do the chore again",
+			"you do the chore every day",
+			"three people already do it daily",
+			"a mistake in the chore deletes data",
+		},
+		Why: "Automation pays when the chore repeats. A one-off does not pay back 2 hours.",
+	},
+	{
+		ID: "ps-split", Topic: "problem", Correct: 2,
+		Ask: "A function is 200 lines and hard to follow. What helps?",
+		Choices: [4]string{
+			"one longer function",
+			"removing the names of variables",
+			"splitting it into small named steps",
+			"catching every error and ignoring it",
+		},
+		Why: "A name lets you check one idea at a time.",
+	},
+	{
+		ID: "ps-laptop", Topic: "problem", Correct: 1,
+		Ask: "Tests pass on the shared runner and fail only on your laptop. What do you compare first?",
+		Choices: [4]string{
+			"the color of the editor",
+			"version, files, clock, and data",
+			"the number of open browser tabs",
+			"the function's comments",
+		},
+		Why: "The failure is a clue that something around the test is different.",
+	},
+	{
+		ID: "ps-stuck", Topic: "problem", Correct: 0,
+		Ask: "You are stuck. What is a useful next move?",
+		Choices: [4]string{
+			"explain the problem out loud from the start",
+			"change random lines",
+			"turn off the tests",
+			"add a second bug to compare",
+		},
+		Why: "Saying it from the start shows the step you skipped.",
+	},
+	{
+		ID: "ps-notest", Topic: "problem", Correct: 3,
+		Ask: "A change has no test. What is the risk?",
+		Choices: [4]string{
+			"gofmt will delete the file",
+			"the program compiles slower",
+			"maps stay in order",
+			"a later edit can break it and nobody notices",
+		},
+		Why: "A test is a tripwire. Without it, the next change can undo this one quietly.",
+	},
+	{
+		ID: "ps-input", Topic: "problem", Correct: 1,
+		Ask: "A user can type anything into your program. What do you do with that text?",
+		Choices: [4]string{
+			"run it as a command",
+			"check it before you trust it",
+			"use it as a file path with no check",
+			"put it straight into a query",
+		},
+		Why: "Their text is data, not instructions, until you have checked it.",
+	},
+	{
+		ID: "ps-rollback", Topic: "problem", Correct: 2,
+		Ask: "A deploy went bad and people cannot work. What is the fastest safe move?",
+		Choices: [4]string{
+			"debug on the broken version for the rest of the day",
+			"add features so the bug is harder to see",
+			"roll back to the last good version",
+			"delete the database",
+		},
+		Why: "Get people working again, then find the cause on the bad change.",
+	},
+	{
+		ID: "ps-done", Topic: "problem", Correct: 0,
+		Ask: "How do you know a task is finished?",
+		Choices: [4]string{
+			"a check you can see, such as a test passing or a page loading",
+			"you feel busy",
+			"the file is long",
+			"you have had it open all day",
+		},
+		Why: "Busy is not the same as finished. A visible check settles it.",
+	},
+}

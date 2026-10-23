@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -58,11 +57,15 @@ func run(args []string) error {
 		}
 		return runLock()
 	case "unlock":
-		if len(args) != 2 {
+		switch len(args) {
+		case 2:
+			return runUnlock("", args[1])
+		case 3:
+			return runUnlock(args[1], args[2])
+		default:
 			usage()
 			return errUsage
 		}
-		return runUnlock(args[1])
 	case "schedule":
 		if len(args) < 2 {
 			usage()
@@ -88,16 +91,22 @@ func run(args []string) error {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `time-protector blocks Gmail, Facebook, Instagram, and LinkedIn during set hours.
+	fmt.Fprintf(os.Stderr, `time-protector blocks Facebook, Instagram, and LinkedIn during set hours.
+WhatsApp and Gmail take fewer questions and do not open the others.
 
   time-protector status
   time-protector unlock 15m
+  time-protector unlock gmail 15m
+  time-protector unlock whatsapp 15m
   time-protector lock
   time-protector schedule 08:00-12:00 13:00-18:00
 
 Install the root service with: sudo make install
 
-Unlocking takes 50 sums. A wrong answer does not count. Quit and you start over.
+unlock 15m is 10 questions and opens every blocked site.
+unlock gmail 15m and unlock whatsapp 15m are 5 questions and open only WhatsApp and Gmail.
+A wrong answer does not count, and the explanation is shown.
+Quit and you start over.
 The longest break is 30 minutes.
 `)
 }
@@ -131,8 +140,8 @@ func runLock() error {
 	return nil
 }
 
-func runUnlock(grant string) error {
-	return runSession(service.SocketPath, os.Stdin, os.Stdout, service.Request{Op: "unlock", Grant: grant})
+func runUnlock(target, grant string) error {
+	return runSession(service.SocketPath, os.Stdin, os.Stdout, service.Request{Op: "unlock", Target: target, Grant: grant})
 }
 
 func runSchedule(windows []string) error {
@@ -166,10 +175,10 @@ func runSession(socket string, in io.Reader, out io.Writer, first service.Reques
 		}
 		return nil
 	}
-	fmt.Fprintln(out, "Solve 50 sums. A wrong answer does not count. Quit and you start over.")
+	fmt.Fprintf(out, "Answer %d questions. A wrong answer does not count. Quit and you start over.\n", resp.Total)
 	reader := bufio.NewReader(in)
 	for {
-		fmt.Fprintf(out, "%d/%d  %s\n", resp.Correct, resp.Total, resp.Prompt)
+		fmt.Fprintf(out, "%d/%d\n%s\n", resp.Correct, resp.Total, resp.Prompt)
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -180,13 +189,13 @@ func runSession(socket string, in io.Reader, out io.Writer, first service.Reques
 			}
 			return err
 		}
-		value, err := strconv.Atoi(strings.TrimSpace(line))
-		if err != nil {
-			fmt.Fprintln(out, "Type the number.")
+		choice := strings.ToLower(strings.TrimSpace(line))
+		if len(choice) != 1 || choice[0] < 'a' || choice[0] > 'd' {
+			fmt.Fprintln(out, "Type a, b, c, or d.")
 			continue
 		}
 		prev := resp.Correct
-		if err := enc.Encode(service.Request{Op: "answer", Session: resp.Session, Value: value}); err != nil {
+		if err := enc.Encode(service.Request{Op: "answer", Session: resp.Session, Choice: choice}); err != nil {
 			return err
 		}
 		resp = service.Response{}
@@ -199,14 +208,19 @@ func runSession(socket string, in io.Reader, out io.Writer, first service.Reques
 			}
 			return errors.New(resp.Error)
 		}
+		if resp.Explain != "" {
+			if resp.Correct == prev && !resp.Done {
+				fmt.Fprintln(out, "Not yet.")
+			} else {
+				fmt.Fprintln(out, "Yes.")
+			}
+			fmt.Fprintln(out, resp.Explain)
+		}
 		if resp.Prompt == "" || resp.Done {
 			if resp.Reason != "" {
 				fmt.Fprintln(out, resp.Reason)
 			}
 			return nil
-		}
-		if resp.Correct == prev {
-			fmt.Fprintln(out, "Nope.")
 		}
 	}
 }

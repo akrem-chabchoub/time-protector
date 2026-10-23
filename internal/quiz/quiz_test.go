@@ -2,39 +2,64 @@ package quiz
 
 import (
 	"math/rand"
+	"strings"
 	"testing"
 )
 
-func TestKnownAnswers(t *testing.T) {
-	add := Problem{Left: 47, Right: 18, Op: "+"}
-	if add.Answer() != 65 || add.Prompt() != "47 + 18" {
-		t.Fatalf("add %+v answer %d", add, add.Answer())
+func TestBankIsUsable(t *testing.T) {
+	seen := map[string]bool{}
+	for _, item := range Bank() {
+		if seen[item.ID] {
+			t.Fatalf("duplicate %s", item.ID)
+		}
+		seen[item.ID] = true
+		if item.Topic != "k8s" && item.Topic != "go" && item.Topic != "problem" {
+			t.Fatalf("%s topic %s", item.ID, item.Topic)
+		}
+		if item.Ask == "" || item.Why == "" {
+			t.Fatalf("%s is incomplete", item.ID)
+		}
+		if item.Correct < 0 || item.Correct > 3 {
+			t.Fatalf("%s correct %d", item.ID, item.Correct)
+		}
+		for _, choice := range item.Choices {
+			if choice == "" {
+				t.Fatalf("%s has an empty choice", item.ID)
+			}
+		}
+		prompt := item.Prompt()
+		if !strings.Contains(prompt, "["+item.Topic+"]") || !strings.Contains(prompt, "  d) ") {
+			t.Fatalf("prompt %q", prompt)
+		}
+		if strings.Contains(prompt, item.Why) {
+			t.Fatalf("prompt leaked the explanation: %s", item.ID)
+		}
+		if item.Letter() != string(rune('a'+item.Correct)) {
+			t.Fatalf("letter %s", item.Letter())
+		}
+		if !strings.Contains(item.Explain(), "Answer "+item.Letter()) {
+			t.Fatalf("explain %s", item.Explain())
+		}
 	}
-	sub := Problem{Left: 80, Right: 23, Op: "-"}
-	if sub.Answer() != 57 || sub.Prompt() != "80 - 23" {
-		t.Fatalf("sub %+v answer %d", sub, sub.Answer())
-	}
-	zero := Problem{Left: 10, Right: 10, Op: "-"}
-	if zero.Answer() != 0 {
-		t.Fatal(zero.Answer())
+	if len(seen) < 36 {
+		t.Fatalf("only %d questions", len(seen))
 	}
 }
 
-func TestNewStaysBoring(t *testing.T) {
+func TestDrawAvoidsRepeats(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
-	for i := 0; i < 2000; i++ {
-		p := New(rng)
-		if p.Left < 10 || p.Left > 99 || p.Right < 10 || p.Right > 99 {
-			t.Fatalf("out of range %+v", p)
+	used := map[string]bool{}
+	seen := map[string]bool{}
+	for i := 0; i < len(bank); i++ {
+		item := Draw(rng, used)
+		if seen[item.ID] {
+			t.Fatalf("repeat %s before the bank was used up", item.ID)
 		}
-		if p.Op != "+" && p.Op != "-" {
-			t.Fatalf("op %q", p.Op)
-		}
-		if p.Op == "-" && p.Left < p.Right {
-			t.Fatalf("negative subtraction %+v", p)
-		}
-		if p.Answer() < 0 || p.Answer() > 198 {
-			t.Fatalf("answer %d for %+v", p.Answer(), p)
-		}
+		seen[item.ID] = true
+		used[item.ID] = true
+	}
+	item := Draw(rng, used)
+	if item.ID == "" || len(used) != 0 {
+		t.Fatalf("draw after a full bank did not start over: %s used %d", item.ID, len(used))
 	}
 }

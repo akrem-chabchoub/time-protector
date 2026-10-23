@@ -10,32 +10,37 @@ func TestDomains(t *testing.T) {
 		}
 		got[domain] = true
 	}
-	want := []string{
-		"gmail.com",
-		"mail.google.com",
+	for _, domain := range []string{
 		"facebook.com",
 		"www.facebook.com",
-		"m.facebook.com",
-		"fb.com",
-		"messenger.com",
 		"instagram.com",
 		"www.instagram.com",
-		"i.instagram.com",
+		"web.whatsapp.com",
+		"wa.me",
 		"linkedin.com",
 		"www.linkedin.com",
-		"lnkd.in",
-	}
-	if len(got) != len(want) {
-		t.Fatalf("got %d domains", len(got))
-	}
-	for _, domain := range want {
+		"gmail.com",
+		"mail.google.com",
+	} {
 		if !got[domain] {
 			t.Errorf("missing %s", domain)
 		}
 	}
-	for _, domain := range []string{"google.com", "accounts.google.com", "imap.gmail.com"} {
+	for _, domain := range []string{"google.com", "accounts.google.com", "imap.gmail.com", "messenger.com"} {
 		if got[domain] {
 			t.Errorf("should not block %s", domain)
+		}
+	}
+	quick := map[string]bool{}
+	for _, domain := range Short() {
+		quick[domain] = true
+	}
+	if quick["facebook.com"] || quick["linkedin.com"] || !quick["mail.google.com"] || !quick["web.whatsapp.com"] {
+		t.Fatalf("short group %v", Short())
+	}
+	for _, domain := range Social() {
+		if domain == "web.whatsapp.com" || domain == "gmail.com" {
+			t.Fatalf("social group includes a short site: %s", domain)
 		}
 	}
 }
