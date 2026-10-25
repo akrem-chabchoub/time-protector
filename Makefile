@@ -30,6 +30,7 @@ install: binary
 	@if [ -f $(VAR_DIR)/hosts.backup ]; then chown root:wheel $(VAR_DIR)/hosts.backup; fi
 	install -m 644 deploy/com.akrem.time-protector.plist $(PLIST)
 	launchctl bootout system/$(LABEL) 2>/dev/null || true
-	launchctl bootstrap system $(PLIST)
+	sleep 1
 	launchctl enable system/$(LABEL) || true
+	launchctl bootstrap system $(PLIST) || { sleep 2; launchctl bootstrap system $(PLIST); }
 	@echo "Installed. Chrome secure DNS is a hole: turn off Use secure DNS in Chrome settings, under Privacy and security, then Security."
